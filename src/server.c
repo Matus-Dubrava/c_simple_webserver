@@ -9,6 +9,7 @@
 #include "unistd.h"
 #include "time.h"
 #include "wb_config.h"
+#include "wb_definitions.h"
 
 typedef struct http_request_t {
     char* method;
@@ -30,114 +31,6 @@ http_request_t* wb_parse_http_request(char* raw_request) {
     request->version = strtok(NULL, "\r\n");
 
     return request;
-}
-
-typedef struct wb_conf_pass_rule_t {
-    char* path;
-    char* ip;
-    int port;
-} wb_conf_pass_rule_t;
-
-wb_conf_pass_rule_t* wb_create_pass_rule(char* path, char* ip, char* port) {
-    wb_conf_pass_rule_t* pass_rule = malloc(sizeof(wb_conf_pass_rule_t));
-    if (!pass_rule) {
-        perror("failed to allocate memory for pass rule");
-        return NULL;
-    }
-
-    pass_rule->port = atoi(port);
-    if (pass_rule->port == 0) {
-        fprintf(stderr, "failed to convert port %s to int\n", port);
-        free(pass_rule);
-        return NULL;
-    }
-
-    pass_rule->path = strdup(path);
-    pass_rule->ip = strdup(ip);
-    return pass_rule;
-}
-
-void wb_conf_pass_rule_destroy(wb_conf_pass_rule_t* pass_rule) {
-    free(pass_rule->path);
-    free(pass_rule->ip);
-    free(pass_rule);
-}
-
-void wb_conf_pass_rule_display(wb_conf_pass_rule_t* pass_rule) {
-    printf("pass rule: path=%s, ip=%s, port=%d\n", pass_rule->path,
-           pass_rule->ip, pass_rule->port);
-}
-
-typedef struct wb_conf_t {
-    wb_conf_pass_rule_t** pass_rules;
-    size_t pass_rules_len;
-    size_t pass_rules_capacity;
-} wb_conf_t;
-
-void wb_conf_destroy(wb_conf_t* conf) {
-    for (size_t i = 0; i < conf->pass_rules_len; ++i) {
-        wb_conf_pass_rule_destroy(conf->pass_rules[i]);
-    }
-
-    free(conf->pass_rules);
-    free(conf);
-}
-
-wb_conf_t* wb_parse_config(char* filepath) {
-    wb_conf_t* conf = malloc(sizeof(wb_conf_t));
-    if (!conf) {
-        perror("failed to allocate memory for wb config");
-        return NULL;
-    }
-
-    wb_conf_pass_rule_t** pass_rules =
-        malloc(WB_CONF_PASS_RULE_MAX_SIZE * sizeof(wb_conf_pass_rule_t*));
-    if (!pass_rules) {
-        perror("failed to allocate memory for pass rules\n");
-        free(conf);
-        return NULL;
-    }
-
-    conf->pass_rules_capacity = WB_CONF_PASS_RULE_MAX_SIZE;
-    conf->pass_rules_len = 0;
-    conf->pass_rules = pass_rules;
-
-    FILE* f = fopen(filepath, "r");
-    if (!f) {
-        perror("failed to open config file");
-        return NULL;
-    }
-
-    char line[1024];
-    while (fgets(line, 1024, f) != NULL) {
-        char* rule = strtok(line, " ");
-        if (strncmp(rule, "pass", 4) == 0) {
-            char* path = strtok(NULL, " ");
-            char* ip = strtok(NULL, ":");
-            char* port = strtok(NULL, "\n");
-
-            printf("rule: %s, path: %s, ip: %s, port: %s\n", rule, path, ip,
-                   port);
-            wb_conf_pass_rule_t* pass_rule =
-                wb_create_pass_rule(path, ip, port);
-            if (!pass_rule) {
-                wb_conf_destroy(conf);
-                return NULL;
-            } else {
-                conf->pass_rules[conf->pass_rules_len++] = pass_rule;
-            }
-        }
-    }
-
-    return conf;
-}
-
-void wb_conf_display(wb_conf_t* conf) {
-    printf("config: len=%zu, capacity=%zu\n", conf->pass_rules_len,
-           conf->pass_rules_capacity);
-    for (size_t i = 0; i < conf->pass_rules_len; ++i) {
-        wb_conf_pass_rule_display(conf->pass_rules[i]);
-    }
 }
 
 void wb_request_display(http_request_t* request) {
@@ -297,11 +190,12 @@ int get_listening_socket(const char* ip, int port) {
 int main() {
     signal(SIGPIPE, SIG_IGN);
 
-    wb_conf_t* wb_conf = wb_parse_config(WB_CONFIG_PATH);
+    wbc_t* wb_conf = wbc_parse_file(WB_CONFIG_PATH);
     if (!wb_conf) {
         exit(EXIT_FAILURE);
     }
-    wb_conf_display(wb_conf);
+    wbc_validate(wb_conf);
+    wbc_display(wb_conf);
 
     const char* ip = "127.0.0.1";
     const int port = 8080;
@@ -348,5 +242,5 @@ int main() {
         }
     }
 
-    wb_conf_destroy(wb_conf);
+    wbc_destroy(wb_conf);
 }

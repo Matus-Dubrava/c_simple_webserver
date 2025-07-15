@@ -1,17 +1,34 @@
 #ifndef WB_CONFIG_H
 #define WB_CONFIG_H
 
-#define MAX_CONN 5
-#define MAX_REQ_SIZE 1024 * 8
-#define MAX_RESP_SIZE 1024 * 16
+#include "stdlib.h"
+#include "stdbool.h"
+#include "wb_definitions.h"
 
-#define UPSTREAM_IP "127.0.0.1"
-#define UPSTREAM_PORT 8000
+typedef struct wbc_pr_t {
+    char* path;
+    char* ip;
+    int port;
+} wbc_pr_t;
 
-#define DEFAULT_MAX_RETRIES 5
-#define DEFAULT_RETRY_WAIT_SECONDS 5
+typedef struct wbc_t {
+    wbc_pr_t** pass_rules;
+    size_t pass_rules_len;
+    size_t pass_rules_capacity;
+} wbc_t;
 
-#define WB_CONFIG_PATH "wb_conf"
-#define WB_CONF_PASS_RULE_MAX_SIZE 1024
+wbc_pr_t* wbc_pr_create(char* path, char* ip, char* port);
+
+void wbc_pr_destroy(wbc_pr_t* pass_rule);
+
+void wbc_pr_display(wbc_pr_t* pass_rule);
+
+void wbc_destroy(wbc_t* conf);
+
+wbc_t* wbc_parse_file(char* filepath);
+
+void wbc_display(wbc_t* conf);
+
+bool wbc_validate(wbc_t* conf);
 
 #endif
