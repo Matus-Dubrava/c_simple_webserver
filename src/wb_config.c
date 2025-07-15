@@ -4,34 +4,41 @@
 #include "stdio.h"
 #include "string.h"
 
-wbc_pr_t* wbc_pr_create(char* path, char* ip, char* port) {
+wbc_pr_t* wbc_pr_create(const char* path,
+                        const char* target_ip,
+                        const char* target_port,
+                        const char* target_path) {
     wbc_pr_t* pass_rule = malloc(sizeof(wbc_pr_t));
     if (!pass_rule) {
         perror("failed to allocate memory for pass rule");
         return NULL;
     }
 
-    pass_rule->port = atoi(port);
-    if (pass_rule->port == 0) {
-        fprintf(stderr, "failed to convert port %s to int\n", port);
+    pass_rule->target_port = atoi(target_port);
+    if (pass_rule->target_port == 0) {
+        fprintf(stderr, "failed to convert port %s to int\n", target_port);
         free(pass_rule);
         return NULL;
     }
 
     pass_rule->path = strdup(path);
-    pass_rule->ip = strdup(ip);
+    pass_rule->target_ip = strdup(target_ip);
+    pass_rule->target_path = strdup(target_path);
     return pass_rule;
 }
 
 void wbc_pr_destroy(wbc_pr_t* pass_rule) {
     free(pass_rule->path);
-    free(pass_rule->ip);
+    free(pass_rule->target_path);
+    free(pass_rule->target_ip);
     free(pass_rule);
 }
 
 void wbc_pr_display(wbc_pr_t* pass_rule) {
-    printf("pass rule: path=%s, ip=%s, port=%d\n", pass_rule->path,
-           pass_rule->ip, pass_rule->port);
+    printf(
+        "pass rule: path=%s, target_path: %s, target_ip=%s, target_port=%d\n",
+        pass_rule->path, pass_rule->target_path, pass_rule->target_ip,
+        pass_rule->target_port);
 }
 
 void wbc_destroy(wbc_t* conf) {
@@ -76,19 +83,23 @@ wbc_t* wbc_parse_file(char* filepath) {
 
         if (strncmp(rule, "pass", 4) == 0) {
             char* path = strtok(NULL, " ");
-            char* ip = strtok(NULL, ":");
-            char* port = strtok(NULL, "\n");
+            char* target_ip = strtok(NULL, ":");
+            char* target_port = strtok(NULL, " ");
+            char* target_path = strtok(NULL, "\n");
 
-            if (!path || !ip || !port) {
+            if (!path || !target_ip || !target_port || !target_path) {
                 fprintf(stderr, "invalid pass rule found: %s\n", line_cpy);
                 all_valid = false;
                 free(line_cpy);
                 break;
             }
 
-            printf("rule: %s, path: %s, ip: %s, port: %s\n", rule, path, ip,
-                   port);
-            wbc_pr_t* pass_rule = wbc_pr_create(path, ip, port);
+            printf(
+                "rule: %s, path: %s, target_path: %s, target_ip: %s, "
+                "target_target_port: %s\n",
+                rule, path, target_path, target_ip, target_port);
+            wbc_pr_t* pass_rule =
+                wbc_pr_create(path, target_ip, target_port, target_path);
             if (!pass_rule) {
                 all_valid = false;
                 free(line_cpy);

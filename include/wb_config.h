@@ -7,8 +7,9 @@
 
 typedef struct wbc_pr_t {
     char* path;
-    char* ip;
-    int port;
+    char* target_ip;
+    int target_port;
+    char* target_path;
 } wbc_pr_t;
 
 typedef struct wbc_t {
@@ -17,7 +18,10 @@ typedef struct wbc_t {
     size_t pass_rules_capacity;
 } wbc_t;
 
-wbc_pr_t* wbc_pr_create(char* path, char* ip, char* port);
+wbc_pr_t* wbc_pr_create(const char* path,
+                        const char* target_ip,
+                        const char* target_port,
+                        const char* target_path);
 
 void wbc_pr_destroy(wbc_pr_t* pass_rule);
 
