@@ -11,4 +11,7 @@
 #define DEFAULT_MAX_RETRIES 5
 #define DEFAULT_RETRY_WAIT_SECONDS 5
 
+#define WB_CONFIG_PATH "wb_conf"
+#define WB_CONF_PASS_RULE_MAX_SIZE 1024
+
 #endif
