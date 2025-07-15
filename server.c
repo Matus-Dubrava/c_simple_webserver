@@ -8,16 +8,7 @@
 #include "arpa/inet.h"
 #include "unistd.h"
 #include "time.h"
-
-#define MAX_CONN 5
-#define MAX_REQ_SIZE 1024 * 8
-#define MAX_RESP_SIZE 1024 * 16
-
-#define UPSTREAM_IP "127.0.0.1"
-#define UPSTREAM_PORT 8000
-
-#define DEFAULT_MAX_RETRIES 5
-#define DEFAULT_RETRY_WAIT_SECONDS 5
+#include "wb_config.h"
 
 int init_sockaddr_in(struct sockaddr_in* addr, const char* ip, int port) {
     memset(addr, 0, sizeof(*addr));

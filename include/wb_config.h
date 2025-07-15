@@ -1,0 +1,14 @@
+#ifndef WB_CONFIG_H
+#define WB_CONFIG_H
+
+#define MAX_CONN 5
+#define MAX_REQ_SIZE 1024 * 8
+#define MAX_RESP_SIZE 1024 * 16
+
+#define UPSTREAM_IP "127.0.0.1"
+#define UPSTREAM_PORT 8000
+
+#define DEFAULT_MAX_RETRIES 5
+#define DEFAULT_RETRY_WAIT_SECONDS 5
+
+#endif

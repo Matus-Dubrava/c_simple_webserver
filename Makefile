@@ -1,8 +1,16 @@
+CC = clang
+CFLAGS = -Wall -Wextra -Werror -g -gdwarf-4
+SRC = server.c
+BUILD_DIR = build
+OUT = $(BUILD_DIR)/server
+INCLUDE = -Iinclude
+
 server:
-	clang server.c -Wall -Werror -Wextra -g -gdwarf-4 -o server
+	mkdir $(BUILD_DIR)
+	$(CC) $(SRC) $(CFLAGS) $(INCLUDE) -o $(OUT)
 
 server-run: server
-	./server
+	./$(OUT)
 
 backend-run:
 	fastapi dev dummy_backend.py
