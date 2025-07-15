@@ -1,12 +1,12 @@
 CC = clang
 CFLAGS = -Wall -Wextra -Werror -g -gdwarf-4
-SRC = server.c
+SRC = src/server.c
 BUILD_DIR = build
 OUT = $(BUILD_DIR)/server
 INCLUDE = -Iinclude
 
 server:
-	mkdir $(BUILD_DIR)
+	mkdir -p $(BUILD_DIR)
 	$(CC) $(SRC) $(CFLAGS) $(INCLUDE) -o $(OUT)
 
 server-run: server
