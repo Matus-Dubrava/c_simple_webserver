@@ -21,6 +21,31 @@ int init_sockaddr_in(struct sockaddr_in* addr, const char* ip, int port) {
     return 0;
 }
 
+int wb_send_payload(int socket, char* payload) {
+    size_t total_len = strlen(payload);
+    size_t total_sent = 0;
+
+    while (total_sent < total_len) {
+        ssize_t sent = send(socket, payload + total_sent, strlen(payload), 0);
+
+        if (sent < 0) {
+            perror("failed to send payload");
+            break;
+        }
+
+        total_sent += sent;
+    }
+
+    if (total_sent == total_len) {
+        printf("sent full payload (%zu bytes)\n", total_sent);
+        return total_sent;
+    } else {
+        fprintf(stderr, "failed to send full payload (sent only %zu bytes)\n",
+                total_sent);
+        return -1;
+    }
+}
+
 char* send_upstream(struct sockaddr_in* addr,
                     char* payload,
                     size_t max_retries,
@@ -44,7 +69,7 @@ char* send_upstream(struct sockaddr_in* addr,
             return NULL;
         }
 
-        ssize_t sent = send(u_sock, payload, strlen(payload), 0);
+        int sent = wb_send_payload(u_sock, payload);
         if (sent >= 0) {
             char* res = malloc(MAX_RESP_SIZE);
             if (!res) {
@@ -75,31 +100,6 @@ char* send_upstream(struct sockaddr_in* addr,
                 return NULL;
             }
         }
-    }
-}
-
-int send_payload(int socket, char* payload) {
-    size_t total_len = strlen(payload);
-    size_t total_sent = 0;
-
-    while (total_sent < total_len) {
-        ssize_t sent = send(socket, payload + total_sent, strlen(payload), 0);
-
-        if (sent < 0) {
-            perror("failed to send payload");
-            break;
-        }
-
-        total_sent += sent;
-    }
-
-    if (total_sent == total_len) {
-        printf("sent full payload (%zu bytes)\n", total_sent);
-        return 0;
-    } else {
-        fprintf(stderr, "failed to send full payload (sent only %zu bytes)\n",
-                total_sent);
-        return -1;
     }
 }
 
@@ -189,10 +189,10 @@ int main() {
                               DEFAULT_RETRY_WAIT_SECONDS);
             if (!u_resp) {
                 char* resp_500 = create_500_response();
-                send_payload(c_sock, resp_500);
+                wb_send_payload(c_sock, resp_500);
                 free(resp_500);
             } else {
-                send_payload(c_sock, u_resp);
+                wb_send_payload(c_sock, u_resp);
             }
             free(u_resp);
             close(c_sock);
