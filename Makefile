@@ -4,4 +4,7 @@ server:
 server-run: server
 	./server
 
+backend-run:
+	fastapi dev dummy_backend.py
+
 .PHONY: server server-run
