@@ -169,7 +169,7 @@ int get_listening_socket(const char* ip, int port) {
 }
 
 int main() {
-    singnal(SIGPIPE, SIG_IGN);
+    signal(SIGPIPE, SIG_IGN);
 
     const char* ip = "127.0.0.1";
     const int port = 8080;
