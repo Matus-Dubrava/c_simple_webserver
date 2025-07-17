@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "*.tn": "plaintext",
+        "wb_http_request.h": "c"
+    }
+}

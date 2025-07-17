@@ -10,33 +10,7 @@
 #include "time.h"
 #include "wb_config.h"
 #include "wb_definitions.h"
-
-typedef struct http_request_t {
-    char* method;
-    char* path;
-    char* version;
-} http_request_t;
-
-http_request_t* wb_parse_http_request(char* raw_request) {
-    http_request_t* request = malloc(sizeof(http_request_t));
-    if (!request) {
-        perror("failed to allocate memory for http header");
-        return NULL;
-    }
-
-    char* raw_request_copy = strdup(raw_request);
-
-    request->method = strtok(raw_request_copy, " ");
-    request->path = strtok(NULL, " ");
-    request->version = strtok(NULL, "\r\n");
-
-    return request;
-}
-
-void wb_request_display(http_request_t* request) {
-    printf("request: method=%s, path=%s, version=%s\n", request->method,
-           request->path, request->version);
-}
+#include "wb_http_request.h"
 
 int init_sockaddr_in(struct sockaddr_in* addr, const char* ip, int port) {
     memset(addr, 0, sizeof(*addr));
@@ -219,8 +193,8 @@ int main() {
         if (received > 0) {
             buf[received] = '\0';
             printf("received:\n%s\n", buf);
-            http_request_t* request = wb_parse_http_request(buf);
-            wb_request_display(request);
+            wb_http_req_t* request = wb_http_req_parse(buf);
+            wb_http_req_display(request);
 
             char* u_resp =
                 send_upstream(&upstream_addr, buf, DEFAULT_MAX_RETRIES,
