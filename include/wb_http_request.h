@@ -15,4 +15,6 @@ void wb_http_req_display(wb_http_req_t* request);
 
 void wb_http_req_destroy(wb_http_req_t* request);
 
+char* wb_http_req_to_str(wb_http_req_t* request);
+
 #endif
