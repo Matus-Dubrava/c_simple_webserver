@@ -193,11 +193,14 @@ int main() {
         if (received > 0) {
             buf[received] = '\0';
             printf("received:\n%s\n", buf);
-            wb_http_req_t* request = wb_http_req_parse(buf);
-            wb_http_req_display(request);
+            wb_http_req_t* req = wb_http_req_parse(buf);
+            wb_http_req_display(req);
+
+            req->path = "/";
+            char* req_str = wb_http_req_to_str(req);
 
             char* u_resp =
-                send_upstream(&upstream_addr, buf, DEFAULT_MAX_RETRIES,
+                send_upstream(&upstream_addr, req_str, DEFAULT_MAX_RETRIES,
                               DEFAULT_RETRY_WAIT_SECONDS);
             if (!u_resp) {
                 char* resp_500 = create_500_response();
@@ -207,7 +210,8 @@ int main() {
                 wb_send_payload(c_sock, u_resp);
             }
             free(u_resp);
-            free(request);
+            free(req);
+            free(req_str);
             close(c_sock);
         } else if (received == 0) {
             printf("client disconnected");
