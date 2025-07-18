@@ -1,4 +1,6 @@
 #include "stdio.h"
+#include "semaphore.h"
+#include "pthread.h"
 #include "signal.h"
 #include "stdbool.h"
 #include "stdlib.h"
@@ -9,6 +11,7 @@
 #include "unistd.h"
 #include "time.h"
 #include "wb_config.h"
+#include "wb_queue.h"
 #include "wb_definitions.h"
 #include "wb_http_request.h"
 #include "wb_http_response.h"
@@ -67,7 +70,9 @@ char* send_upstream(struct sockaddr_in* addr,
             return NULL;
         }
 
+        // TODO: retry connection to upstream service
         if (connect(u_sock, (struct sockaddr*)addr, sizeof(*addr)) == -1) {
+            close(u_sock);  // TODO: when retry is implemented, remove this line
             perror("failed to connect upstream");
             return NULL;
         }
@@ -77,14 +82,18 @@ char* send_upstream(struct sockaddr_in* addr,
             char* res = malloc(MAX_RESP_SIZE);
             if (!res) {
                 perror("failed to allocate memory for upstream response");
+                close(u_sock);
                 return NULL;
             }
-            int rec = recv(u_sock, res, MAX_RESP_SIZE, 0);
-            if (rec >= 0) {
+            int nrec = recv(u_sock, res, MAX_RESP_SIZE, 0);
+            if (nrec >= 0) {
+                res[nrec] = '\0';
+                close(u_sock);
                 return res;
             } else {
                 is_request_successful = false;
-                perror("failed to receive response from usptream service");
+                free(res);
+                perror("failed to receive response from upstream service");
             }
         } else {
             is_request_successful = false;
@@ -92,6 +101,7 @@ char* send_upstream(struct sockaddr_in* addr,
         }
 
         if (!is_request_successful) {
+            close(u_sock);
             if (attempt < max_retries) {
                 printf("retrying in %zu seconds (attemt %zu/%zu)\n",
                        retry_wait_seconds, attempt, max_retries);
@@ -106,7 +116,8 @@ char* send_upstream(struct sockaddr_in* addr,
     }
 }
 
-wb_http_resp_t* wb_proxy_pass_request(wb_http_req_t* req, wbc_t* wb_config) {
+wb_http_resp_t* wb_proxy_pass_request(wb_http_req_t* req,
+                                      const wbc_t* wb_config) {
     size_t pass_rule_idx = 0;
     bool found = false;
 
@@ -200,6 +211,79 @@ int get_listening_socket(const char* ip, int port) {
     return l_sock;
 }
 
+typedef struct wb_worker_ctx_t {
+    const wbc_t* wb_conf;
+    wb_queue* queue;
+    sem_t* sem;
+    pthread_mutex_t* mut;
+} wb_worker_ctx_t;
+
+void wb_worker_ctx_init(wb_worker_ctx_t* ctx,
+                        const wbc_t* wb_conf,
+                        wb_queue* queue,
+                        sem_t* sem,
+                        pthread_mutex_t* mut) {
+    ctx->mut = mut;
+    ctx->queue = queue;
+    ctx->sem = sem;
+    ctx->wb_conf = wb_conf;
+}
+
+void* process_http_request(void* worker_ctx) {
+    wb_worker_ctx_t* ctx = (wb_worker_ctx_t*)worker_ctx;
+
+    for (;;) {
+        pthread_mutex_lock(ctx->mut);
+        if (!ctx->queue->head) {
+            pthread_mutex_unlock(ctx->mut);
+            printf("[worker %zx] waiting for requests...\n", pthread_self());
+            sem_wait(ctx->sem);
+            continue;
+        }
+
+        int* c_sock = wb_queue_dequeue(ctx->queue);
+        pthread_mutex_unlock(ctx->mut);
+
+        char buf[MAX_REQ_SIZE];
+        ssize_t received = recv(*c_sock, buf, MAX_REQ_SIZE - 1, 0);
+        if (received > 0) {
+            buf[received] = '\0';
+            printf("[worker %zu] received:\n%s\n", pthread_self(), buf);
+            wb_http_req_t* req = wb_http_req_parse(buf);
+            wb_http_req_display(req);
+
+            wb_http_resp_t* upstream_resp =
+                wb_proxy_pass_request(req, ctx->wb_conf);
+            if (!upstream_resp) {
+                // this is not always 500; maybe we are just missing proxy pass
+                // rule in which case we should return something else
+                char* resp_500 = create_500_response();
+                wb_send_payload(*c_sock, resp_500);
+                free(resp_500);
+            } else {
+                char* resp_str = wb_http_resp_to_str(upstream_resp);
+                if (!resp_str) {
+                    char* resp_500 = create_500_response();
+                    wb_send_payload(*c_sock, resp_500);
+                    free(resp_500);
+                } else {
+                    wb_send_payload(*c_sock, resp_str);
+                    free(resp_str);
+                }
+            }
+
+            wb_http_resp_destroy(upstream_resp);
+            wb_http_req_destroy(req);
+        } else if (received == 0) {
+            printf("client disconnected");
+        } else {
+            perror("failed to receive request from client\n");
+        }
+        close(*c_sock);
+        free(c_sock);
+    }
+}
+
 int main() {
     signal(SIGPIPE, SIG_IGN);
 
@@ -209,6 +293,18 @@ int main() {
     }
     wbc_validate(wb_conf);
     wbc_display(wb_conf);
+
+    size_t nworkers = 5;
+    wb_queue queue;
+    wb_queue_init(&queue);
+
+    sem_t sem;
+    pthread_mutex_t mut;
+    pthread_mutex_init(&mut, NULL);
+    sem_init(&sem, 0, 0);
+
+    wb_worker_ctx_t worker_ctx;
+    wb_worker_ctx_init(&worker_ctx, wb_conf, &queue, &sem, &mut);
 
     const char* ip = "127.0.0.1";
     const int port = 8080;
@@ -221,48 +317,43 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
+    pthread_t workers[nworkers];
+    for (size_t i = 0; i < nworkers; ++i) {
+        if (pthread_create(&workers[i], NULL, process_http_request,
+                           &worker_ctx) == -1) {
+            perror("failed to create worker thread");
+            exit(EXIT_FAILURE);
+        }
+    }
+
     for (;;) {
         int c_sock = accept(l_sock, NULL, NULL);
         if (c_sock == -1) {
             perror("accept failed");
         }
 
-        char buf[MAX_REQ_SIZE];
-        ssize_t received = recv(c_sock, buf, MAX_REQ_SIZE - 1, 0);
-        if (received > 0) {
-            buf[received] = '\0';
-            printf("received:\n%s\n", buf);
-            wb_http_req_t* req = wb_http_req_parse(buf);
-            wb_http_req_display(req);
-
-            wb_http_resp_t* upstream_resp = wb_proxy_pass_request(req, wb_conf);
-            if (!upstream_resp) {
-                // this is not always 500; maybe we are just missing proxy pass
-                // rule in which case we should return something else
-                char* resp_500 = create_500_response();
-                wb_send_payload(c_sock, resp_500);
-                free(resp_500);
-            } else {
-                char* resp_str = wb_http_resp_to_str(upstream_resp);
-                if (!resp_str) {
-                    char* resp_500 = create_500_response();
-                    wb_send_payload(c_sock, resp_500);
-                    free(resp_500);
-                } else {
-                    wb_send_payload(c_sock, resp_str);
-                    free(resp_str);
-                }
-            }
-
-            wb_http_resp_destroy(upstream_resp);
-            wb_http_req_destroy(req);
+        pthread_mutex_lock(&mut);
+        int* c_sock_ptr = malloc(sizeof(int));
+        if (!c_sock_ptr) {
+            perror("failed to allocate memory for client socket");
             close(c_sock);
-        } else if (received == 0) {
-            printf("client disconnected");
-        } else {
-            perror("failed to receive request from client\n");
+            pthread_mutex_unlock(&mut);
+            continue;
+        }
+        *c_sock_ptr = c_sock;
+
+        wb_queue_enqueue(&queue, c_sock_ptr);
+        sem_post(&sem);
+        pthread_mutex_unlock(&mut);
+    }
+
+    for (size_t i = 0; i < nworkers; ++i) {
+        if (pthread_join(workers[i], NULL) == -1) {
+            perror("failed to join worker thread");
         }
     }
 
     wbc_destroy(wb_conf);
+    pthread_mutex_destroy(&mut);
+    sem_destroy(&sem);
 }
