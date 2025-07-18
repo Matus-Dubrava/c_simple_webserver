@@ -1,6 +1,6 @@
 CC = clang
 CFLAGS = -Wall -Wextra -Werror -g -gdwarf-4
-SRC = src/wb_config.c src/wb_http_request.c
+SRC = src/wb_config.c src/wb_http_request.c src/wb_http_response.c
 SRC_MAIN = src/server.c 
 BUILD_DIR = build
 TEST_DIR = tests
@@ -16,6 +16,9 @@ server:
 
 server-run: server
 	./$(OUT)
+
+server-dbg: server
+	gf2 ./$(OUT)
 
 backend-run:
 	fastapi dev dummy_backend.py
@@ -35,4 +38,4 @@ test-http-request:
 
 
 
-.PHONY: server server-run test-config test-http-request
+.PHONY: server server-run test-config test-http-request server-dbg

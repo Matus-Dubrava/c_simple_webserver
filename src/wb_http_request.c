@@ -27,13 +27,17 @@ wb_http_req_t* wb_http_req_parse(char* raw_request) {
 
 void wb_http_req_display(wb_http_req_t* request) {
     printf("---------------------\n");
-    printf("request: method=%s, path=%s, version=%s\n", request->method,
+    printf("HTTP REQUEST: method=%s, path=%s, version=%s\n", request->method,
            request->path, request->version);
     printf("%s", request->raw_remaining);
 }
 
 char* wb_http_req_to_str(wb_http_req_t* request) {
-    char* req_str = malloc(1024 * 16 * sizeof(char));
+    // @TODO: make sure that the request size make sense; this is hardcoded for
+    // testing purposes
+    size_t max_req_size = 1024 * 16 * sizeof(char);
+
+    char* req_str = malloc(max_req_size);
     if (!req_str) {
         perror("failed to allocate memory for request string");
         return NULL;
@@ -45,6 +49,8 @@ char* wb_http_req_to_str(wb_http_req_t* request) {
 }
 
 void wb_http_req_destroy(wb_http_req_t* request) {
-    free(request->raw_request);
-    free(request);
+    if (request) {
+        free(request->raw_request);
+        free(request);
+    }
 }

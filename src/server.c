@@ -11,6 +11,7 @@
 #include "wb_config.h"
 #include "wb_definitions.h"
 #include "wb_http_request.h"
+#include "wb_http_response.h"
 
 int init_sockaddr_in(struct sockaddr_in* addr, const char* ip, int port) {
     memset(addr, 0, sizeof(*addr));
@@ -105,6 +106,44 @@ char* send_upstream(struct sockaddr_in* addr,
     }
 }
 
+wb_http_resp_t* wb_proxy_pass_request(wb_http_req_t* req, wbc_t* wb_config) {
+    size_t pass_rule_idx = 0;
+    bool found = false;
+
+    // TODO: this should not be linear array search
+    for (size_t i = 0; i < wb_config->pass_rules_len; ++i) {
+        if (strncmp(wb_config->pass_rules[i]->path, req->path,
+                    strlen(req->path)) == 0) {
+            pass_rule_idx = i;
+            found = true;
+            break;
+        }
+    }
+
+    if (!found) {
+        printf("no pass rule for path %s\n", req->path);
+        return NULL;
+    } else {
+        struct sockaddr_in addr;
+        init_sockaddr_in(&addr, wb_config->pass_rules[pass_rule_idx]->target_ip,
+                         wb_config->pass_rules[pass_rule_idx]->target_port);
+
+        // rewrite path based on provided configuration
+        req->path = wb_config->pass_rules[pass_rule_idx]->target_path;
+        char* req_str = wb_http_req_to_str(req);
+        printf("sending request to %s:%d\n",
+               wb_config->pass_rules[pass_rule_idx]->target_ip,
+               wb_config->pass_rules[pass_rule_idx]->target_port);
+        wb_http_req_display(req);
+        char* raw_resp = send_upstream(&addr, req_str, DEFAULT_MAX_RETRIES,
+                                       DEFAULT_RETRY_WAIT_SECONDS);
+        wb_http_resp_t* resp = wb_http_resp_parse(raw_resp);
+
+        free(req_str);
+        return resp;
+    }
+}
+
 char* create_500_response() {
     char* resp = malloc(1024 * sizeof(char));
     if (!resp) {
@@ -196,22 +235,27 @@ int main() {
             wb_http_req_t* req = wb_http_req_parse(buf);
             wb_http_req_display(req);
 
-            req->path = "/";
-            char* req_str = wb_http_req_to_str(req);
-
-            char* u_resp =
-                send_upstream(&upstream_addr, req_str, DEFAULT_MAX_RETRIES,
-                              DEFAULT_RETRY_WAIT_SECONDS);
-            if (!u_resp) {
+            wb_http_resp_t* upstream_resp = wb_proxy_pass_request(req, wb_conf);
+            if (!upstream_resp) {
+                // this is not always 500; maybe we are just missing proxy pass
+                // rule in which case we should return something else
                 char* resp_500 = create_500_response();
                 wb_send_payload(c_sock, resp_500);
                 free(resp_500);
             } else {
-                wb_send_payload(c_sock, u_resp);
+                char* resp_str = wb_http_resp_to_str(upstream_resp);
+                if (!resp_str) {
+                    char* resp_500 = create_500_response();
+                    wb_send_payload(c_sock, resp_500);
+                    free(resp_500);
+                } else {
+                    wb_send_payload(c_sock, resp_str);
+                    free(resp_str);
+                }
             }
-            free(u_resp);
-            free(req);
-            free(req_str);
+
+            wb_http_resp_destroy(upstream_resp);
+            wb_http_req_destroy(req);
             close(c_sock);
         } else if (received == 0) {
             printf("client disconnected");
