@@ -15,11 +15,17 @@ wb_http_req_t* wb_http_req_parse(char* raw_request) {
     request->path = strtok(NULL, " ");
     request->version = strtok(NULL, "\r\n");
 
-    char* end_of_line = strstr(raw_request, "\r\n");
-    if (end_of_line && *(end_of_line + 2) != '\0') {
-        request->raw_remaining = end_of_line + 2;
+    // end of first line; this will need to be updated once we start
+    // parsing headers
+    char* header_end = strstr(raw_request, "\r\n\r\n");
+    if (header_end) {
+        size_t header_len = header_end - (strstr(raw_request, "\r\n") + 2);
+        request->raw_headers =
+            strndup(strstr(raw_request, "\r\n") + 2, header_len);
+        request->raw_remaining = strdup(header_end + 4);
     } else {
-        request->raw_remaining = "";
+        request->raw_headers = strdup("");
+        request->raw_remaining = strdup("");
     }
 
     return request;
@@ -29,7 +35,7 @@ void wb_http_req_display(wb_http_req_t* request) {
     printf("---------------------\n");
     printf("HTTP REQUEST: method=%s, path=%s, version=%s\n", request->method,
            request->path, request->version);
-    printf("%s", request->raw_remaining);
+    printf("%s\r\n\r\n%s", request->raw_headers, request->raw_remaining);
 }
 
 char* wb_http_req_to_str(wb_http_req_t* request) {
@@ -43,14 +49,16 @@ char* wb_http_req_to_str(wb_http_req_t* request) {
         return NULL;
     }
 
-    sprintf(req_str, "%s %s %s\r\n%s", request->method, request->path,
-            request->version, request->raw_remaining);
+    sprintf(req_str, "%s %s %s\r\n%s\r\n\r\n%s", request->method, request->path,
+            request->version, request->raw_headers, request->raw_remaining);
     return req_str;
 }
 
 void wb_http_req_destroy(wb_http_req_t* request) {
     if (request) {
         free(request->raw_request);
+        free(request->raw_headers);
+        free(request->raw_remaining);
         free(request);
     }
 }

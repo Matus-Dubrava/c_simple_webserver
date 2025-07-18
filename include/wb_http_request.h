@@ -6,6 +6,7 @@ typedef struct wb_http_req_t {
     char* method;
     char* path;
     char* version;
+    char* raw_headers;
     char* raw_remaining;
 } wb_http_req_t;
 
