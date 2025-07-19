@@ -1,4 +1,5 @@
 import requests
+import sys
 import time
 import argparse
 
@@ -15,14 +16,22 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    counter = 0
+    nrequests = 0
+    nerrors = 0
+
     while True:
-        if args.count > 0 and counter >= args.count:
+        if args.count > 0 and nrequests >= args.count:
             break
 
-        response = requests.get(args.url)
-        print(f"counter: {counter}")
-        counter += 1
+        try:
+            response = requests.get(args.url)
+        except Exception as e:
+            nerrors += 1
+            print(f"error: {e}", file=sys.stderr)
+            continue
+
+        print(f"requests: {nrequests} (errors: {nerrors})")
+        nrequests += 1
 
         if args.wait_time > 0:
             time.sleep(args.wait_time)
