@@ -1,10 +1,14 @@
+#include "assert.h"
 #include "stdio.h"
+#include "errno.h"
+#include "fcntl.h"
 #include "semaphore.h"
 #include "pthread.h"
 #include "signal.h"
 #include "stdbool.h"
 #include "stdlib.h"
 #include "string.h"
+#include "sys/epoll.h"
 #include "sys/socket.h"
 #include "netinet/in.h"
 #include "arpa/inet.h"
@@ -28,11 +32,15 @@ int init_sockaddr_in(struct sockaddr_in* addr, const char* ip, int port) {
 }
 
 int wb_send_payload(int socket, char* payload) {
+    assert(strlen(payload) != 0);
+    printf("sending to socket: %d\n", socket);
+
     size_t total_len = strlen(payload);
     size_t total_sent = 0;
 
     while (total_sent < total_len) {
-        ssize_t sent = send(socket, payload + total_sent, strlen(payload), 0);
+        ssize_t sent =
+            send(socket, payload + total_sent, total_len - total_sent, 0);
 
         if (sent < 0) {
             perror("failed to send payload");
@@ -46,8 +54,9 @@ int wb_send_payload(int socket, char* payload) {
         printf("sent full payload (%zu bytes)\n", total_sent);
         return total_sent;
     } else {
-        fprintf(stderr, "failed to send full payload (sent only %zu bytes)\n",
-                total_sent);
+        fprintf(stderr,
+                "failed to send full payload (sent only %zu/%zu bytes)\n",
+                total_sent, strlen(payload));
         return -1;
     }
 }
@@ -69,6 +78,7 @@ char* send_upstream(struct sockaddr_in* addr,
             perror("failed to create upstream socket");
             return NULL;
         }
+        printf("[upstream] u_sock = %d\n", u_sock);
 
         // TODO: retry connection to upstream service
         if (connect(u_sock, (struct sockaddr*)addr, sizeof(*addr)) == -1) {
@@ -242,12 +252,42 @@ void* process_http_request(void* worker_ctx) {
         }
 
         int* c_sock = wb_queue_dequeue(ctx->queue);
+        int dup_c_sock = dup(*c_sock);
+        close(*c_sock);
+        free(c_sock);
+
         pthread_mutex_unlock(ctx->mut);
+        printf("[worker %zu] c_sock = %d\n", pthread_self(), dup_c_sock);
 
         char buf[MAX_REQ_SIZE];
-        ssize_t received = recv(*c_sock, buf, MAX_REQ_SIZE - 1, 0);
-        if (received > 0) {
-            buf[received] = '\0';
+        ssize_t nrecv;
+        size_t total_recv = 0;
+        while ((nrecv = recv(dup_c_sock, buf + total_recv,
+                             MAX_REQ_SIZE - total_recv - 1, 0)) > 0) {
+            if (nrecv < 0) {
+                if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                    break;
+                }
+            } else {
+                perror("recv failed");
+                fprintf(stderr, "errno: %d\n", errno);
+                total_recv = -1;
+                break;
+            }
+
+            total_recv += nrecv;
+            if (total_recv >= MAX_REQ_SIZE - 1) {
+                fprintf(stderr,
+                        "failed to receive full response because buffer is too "
+                        "small");
+                break;
+            } else {
+                printf("receivied: %zu bytes\n", nrecv);
+            }
+        }
+
+        if (nrecv > 0) {
+            buf[nrecv] = '\0';
             printf("[worker %zu] received:\n%s\n", pthread_self(), buf);
             wb_http_req_t* req = wb_http_req_parse(buf);
             wb_http_req_display(req);
@@ -255,33 +295,51 @@ void* process_http_request(void* worker_ctx) {
             wb_http_resp_t* upstream_resp =
                 wb_proxy_pass_request(req, ctx->wb_conf);
             if (!upstream_resp) {
-                // this is not always 500; maybe we are just missing proxy pass
-                // rule in which case we should return something else
+                // this is not always 500; maybe we are just missing proxy
+                // pass rule in which case we should return something else
                 char* resp_500 = create_500_response();
-                wb_send_payload(*c_sock, resp_500);
+                wb_send_payload(dup_c_sock, resp_500);
                 free(resp_500);
             } else {
                 char* resp_str = wb_http_resp_to_str(upstream_resp);
                 if (!resp_str) {
                     char* resp_500 = create_500_response();
-                    wb_send_payload(*c_sock, resp_500);
+                    wb_send_payload(dup_c_sock, resp_500);
                     free(resp_500);
                 } else {
-                    wb_send_payload(*c_sock, resp_str);
+                    wb_send_payload(dup_c_sock, resp_str);
                     free(resp_str);
                 }
             }
 
             wb_http_resp_destroy(upstream_resp);
             wb_http_req_destroy(req);
-        } else if (received == 0) {
+        } else if (nrecv == 0) {
             printf("client disconnected");
         } else {
             perror("failed to receive request from client\n");
         }
-        close(*c_sock);
-        free(c_sock);
+
+        close(dup_c_sock);
     }
+}
+
+int setnonblocking(int sock) {
+    int flags = fcntl(sock, F_GETFL);
+    if (flags == -1) {
+        perror("fcntl get failed");
+        return -1;
+    }
+
+    flags = flags | O_NONBLOCK;
+
+    flags = fcntl(sock, F_SETFL, flags);
+    if (flags == -1) {
+        perror("fcnfl set failed");
+        return -1;
+    }
+
+    return 0;
 }
 
 int main() {
@@ -309,11 +367,27 @@ int main() {
     const char* ip = "127.0.0.1";
     const int port = 8080;
 
+    struct epoll_event ev, events[MAX_EVENTS];
+    int nfds, epollfd;
+
     struct sockaddr_in upstream_addr;
     init_sockaddr_in(&upstream_addr, UPSTREAM_IP, UPSTREAM_PORT);
 
     int l_sock = get_listening_socket(ip, port);
     if (l_sock == -1) {
+        exit(EXIT_FAILURE);
+    }
+
+    epollfd = epoll_create1(0);
+    if (epollfd == -1) {
+        perror("failed epoll create1");
+        exit(EXIT_FAILURE);
+    }
+
+    ev.events = EPOLLIN;
+    ev.data.fd = l_sock;
+    if (epoll_ctl(epollfd, EPOLL_CTL_ADD, l_sock, &ev) == -1) {
+        perror("epoll ctl: listen socket");
         exit(EXIT_FAILURE);
     }
 
@@ -327,24 +401,48 @@ int main() {
     }
 
     for (;;) {
-        int c_sock = accept(l_sock, NULL, NULL);
-        if (c_sock == -1) {
-            perror("accept failed");
+        nfds = epoll_wait(epollfd, events, MAX_EVENTS, -1);
+        if (nfds == -1) {
+            perror("epoll wait failed");
+            continue;  // TODO: decide how to handle this more appropriatelly
         }
 
-        pthread_mutex_lock(&mut);
-        int* c_sock_ptr = malloc(sizeof(int));
-        if (!c_sock_ptr) {
-            perror("failed to allocate memory for client socket");
-            close(c_sock);
-            pthread_mutex_unlock(&mut);
-            continue;
-        }
-        *c_sock_ptr = c_sock;
+        for (int i = 0; i < nfds; ++i) {
+            if (events[i].data.fd == l_sock) {
+                int c_sock = accept(l_sock, NULL, NULL);
+                if (c_sock == -1) {
+                    perror("accept failed");
+                    exit(EXIT_FAILURE);
+                }
 
-        wb_queue_enqueue(&queue, c_sock_ptr);
-        sem_post(&sem);
-        pthread_mutex_unlock(&mut);
+                if (setnonblocking(c_sock) == -1) {
+                    exit(EXIT_FAILURE);
+                    continue;  // maybe better error handling?
+                }
+
+                ev.events = EPOLLIN | EPOLLET;
+                ev.data.fd = c_sock;
+                if (epoll_ctl(epollfd, EPOLL_CTL_ADD, c_sock, &ev) == -1) {
+                    perror("epoll clt: connection socket");
+                    exit(EXIT_FAILURE);
+                    continue;  //  maybe better error handling?
+                }
+            } else {
+                pthread_mutex_lock(&mut);
+                int* c_sock_ptr = malloc(sizeof(int));
+                if (!c_sock_ptr) {
+                    perror("failed to allocate memory for client socket");
+                    close(events[i].data.fd);
+                    pthread_mutex_unlock(&mut);
+                    continue;
+                }
+                *c_sock_ptr = events[i].data.fd;
+
+                wb_queue_enqueue(&queue, c_sock_ptr);
+                sem_post(&sem);
+                pthread_mutex_unlock(&mut);
+            }
+        }
     }
 
     for (size_t i = 0; i < nworkers; ++i) {

@@ -1,7 +1,8 @@
 #ifndef WB_DEFINITIONS_H
 #define WB_DEFINITIONS_H
 
-#define MAX_CONN 5
+#define MAX_EVENTS 1000
+#define MAX_CONN 1000
 #define MAX_REQ_SIZE 1024 * 8
 #define MAX_RESP_SIZE 1024 * 16
 
